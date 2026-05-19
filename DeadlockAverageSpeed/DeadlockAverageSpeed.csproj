@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>DeadlockAverageSpeed</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <DeadlockDir Condition="'$(DeadlockDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Deadlock</DeadlockDir>
+    <DeadworksSdkDir Condition="'$(DeadworksSdkDir)' == '' and Exists('$(MSBuildProjectDirectory)\..\vendor\deadworks\game\bin\win64\managed\DeadworksManaged.Api.dll')">$(MSBuildProjectDirectory)\..\vendor\deadworks</DeadworksSdkDir>
+    <DeadworksSdkDir Condition="'$(DeadworksSdkDir)' == ''">$(DeadlockDir)</DeadworksSdkDir>
+  </PropertyGroup>
+
+  <Target Name="CheckDeadworksReferences" BeforeTargets="ResolveReferences">
+    <Error
+      Condition="!Exists('$(DeadworksSdkDir)\game\bin\win64\managed\DeadworksManaged.Api.dll')"
+      Text="DeadworksManaged.Api.dll was not found. Install Deadworks into Deadlock or build with /p:DeadworksSdkDir=&quot;C:\path\to\deadworks&quot;." />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="DeadworksManaged.Api">
+      <HintPath>$(DeadworksSdkDir)\game\bin\win64\managed\DeadworksManaged.Api.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Google.Protobuf">
+      <HintPath>$(DeadworksSdkDir)\game\bin\win64\managed\Google.Protobuf.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(DeployToDeadlock)' == 'true'">
+    <ItemGroup>
+      <DeployFiles Include="$(OutputPath)DeadlockAverageSpeed.dll;$(OutputPath)DeadlockAverageSpeed.pdb" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(DeployFiles)"
+      DestinationFolder="$(DeadlockDir)\game\bin\win64\managed\plugins"
+      SkipUnchangedFiles="false"
+      Retries="0"
+      ContinueOnError="WarnAndContinue" />
+  </Target>
+</Project>

@@ -1,0 +1,17 @@
+.vs/
+.vscode/
+
+bin/
+obj/
+TestResults/
+
+vendor/
+*.user
+*.suo
+*.log
+*.tmp
+
+DeadlockAverageSpeed/bin/
+DeadlockAverageSpeed/obj/
+DeadlockAverageSpeedOverlay/bin/
+DeadlockAverageSpeedOverlay/obj/
