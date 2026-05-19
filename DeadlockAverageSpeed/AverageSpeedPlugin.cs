@@ -20,6 +20,7 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
     private const int OverlayUdpPort = 47777;
     private const int OverlayCommandUdpPort = 47778;
     private const double RollingMaxSeconds = 5.0;
+    private const double MovementStartThreshold = 0.5;
     private const double HudIntervalSeconds = 1.0;
 
     private readonly Dictionary<int, SpeedStats> _statsByController = new();
@@ -332,6 +333,7 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
         private double _weightedVerticalSum;
         private double _weightedTotalSum;
         private double _seconds;
+        private bool _waitingForFirstMovement = true;
         private readonly Queue<SpeedSample> _recentSamples = new();
 
         public double CurrentHorizontal { get; private set; }
@@ -352,6 +354,7 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
             _weightedVerticalSum = 0;
             _weightedTotalSum = 0;
             _seconds = 0;
+            _waitingForFirstMovement = true;
             _recentSamples.Clear();
             CurrentHorizontal = 0;
             CurrentVertical = 0;
@@ -386,6 +389,19 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
             CurrentHorizontal = horizontal;
             CurrentVertical = vertical;
             CurrentTotal = total;
+
+            if (_waitingForFirstMovement)
+            {
+                if (total < MovementStartThreshold)
+                {
+                    _lastTimestamp = 0;
+                    return;
+                }
+
+                _waitingForFirstMovement = false;
+                _lastTimestamp = now;
+            }
+
             MaxHorizontal = Math.Max(MaxHorizontal, horizontal);
             MaxVertical = Math.Max(MaxVertical, vertical);
             MaxTotal = Math.Max(MaxTotal, total);
