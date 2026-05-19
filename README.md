@@ -28,3 +28,13 @@ More details are in:
 ```text
 DeadlockAverageSpeed\README.md
 ```
+
+## Publish Private GitHub Repo
+
+After installing GitHub CLI and logging in:
+
+```bat
+publish-private-github.cmd
+```
+
+By default it creates a private repository named `deadlock-average-speed`.
