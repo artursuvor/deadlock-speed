@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -12,13 +13,15 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
 {
     public override string Name => "Average Speed";
 
-    private const int SampleIntervalMilliseconds = 50;
-    private const int OverlayIntervalMilliseconds = 100;
+    private const int SampleIntervalMilliseconds = 16;
+    private const int OverlayIntervalMilliseconds = 33;
     private const int OverlayCommandPollMilliseconds = 100;
     private const int WatchIntervalMilliseconds = 500;
     private const int CreepCleanupIntervalMilliseconds = 1000;
     private const int OverlayUdpPort = 47777;
     private const int OverlayCommandUdpPort = 47778;
+    private const string OverlaySettingsFolderName = "DeadlockAverageSpeedOverlay";
+    private const string OverlaySettingsFileName = "settings.json";
     private const double RollingMaxSeconds = 5.0;
     private const double MovementStartThreshold = 0.5;
     private const double HudIntervalSeconds = 1.0;
@@ -26,6 +29,8 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
     private readonly Dictionary<int, SpeedStats> _statsByController = new();
     private readonly HashSet<int> _watchingControllers = new();
     private readonly HashSet<int> _hudControllers = new();
+    private TrackedKey _dashKey = TrackedKey.FromName("Shift");
+    private TrackedKey _jumpKey = TrackedKey.FromName("Space");
     private UdpClient? _overlayUdp;
     private UdpClient? _overlayCommandUdp;
     private IHandle? _sampleTimer;
@@ -37,6 +42,7 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
     public override void OnLoad(bool isReload)
     {
         Console.WriteLine(isReload ? "[Average Speed] Reloaded" : "[Average Speed] Loaded");
+        LoadActionButtonSettings();
 
         _sampleTimer?.Cancel();
         _overlayTimer?.Cancel();
@@ -72,6 +78,17 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
             Server.ClientCommand(args.Slot, "changeteam 0");
             Server.ClientCommand(args.Slot, "citadel_hero_testing_enabled true");
         });
+    }
+
+    public override void OnProcessUsercmds(ProcessUsercmdsEvent args)
+    {
+        if (args.Controller == null || args.Usercmds == null)
+            return;
+
+        var stats = GetOrCreateStats(args.Controller);
+
+        foreach (var cmd in args.Usercmds)
+            TrackActionAngle(args.Controller, stats, cmd);
     }
 
     public override void OnUnload()
@@ -133,6 +150,13 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
     public void CmdSpeedOverlay(CCitadelPlayerController caller)
     {
         caller.PrintToConsole($"[Average Speed] Overlay stream: UDP 127.0.0.1:{OverlayUdpPort}. Start DeadlockAverageSpeedOverlay.exe.");
+    }
+
+    [Command("speedkeys", Description = "Set action angle keys. Example: speedkeys Shift Space")]
+    public void CmdSpeedKeys(CCitadelPlayerController caller, string dashKey = "Shift", string jumpKey = "Space")
+    {
+        ConfigureActionKeys(dashKey, jumpKey);
+        caller.PrintToConsole($"[Average Speed] Action angle keys: dash={_dashKey.Name}, jump={_jumpKey.Name}.");
     }
 
     private void SampleAllPlayers()
@@ -228,8 +252,18 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
                 var bytes = _overlayCommandUdp.Receive(ref endpoint);
                 var json = Encoding.UTF8.GetString(bytes);
                 var command = JsonSerializer.Deserialize<OverlayCommand>(json);
-                if (command?.Command == "reset")
-                    ResetStatsForSlot(command.Slot);
+                switch (command?.Command)
+                {
+                    case "reset":
+                        ResetStatsForSlot(command.Slot);
+                        break;
+                    case "reset_max":
+                        ResetMaxStatsForSlot(command.Slot);
+                        break;
+                    case "configure_keys":
+                        ConfigureActionKeys(command.DashKey, command.JumpKey);
+                        break;
+                }
             }
             catch (SocketException)
             {
@@ -258,6 +292,112 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
             GetOrCreateStats(controller).Reset();
             return;
         }
+    }
+
+    private void ResetMaxStatsForSlot(int slot)
+    {
+        if (_statsByController.TryGetValue(slot, out var stats))
+        {
+            stats.ResetMax();
+            return;
+        }
+
+        foreach (var controller in Players.GetAll())
+        {
+            if (controller.EntityIndex != slot)
+                continue;
+
+            GetOrCreateStats(controller).ResetMax();
+            return;
+        }
+    }
+
+    private void TrackActionAngle(CCitadelPlayerController controller, SpeedStats stats, CCitadelUserCmdPB cmd)
+    {
+        var yaw = TryGetCameraYaw(cmd) ?? TryGetPawnYaw(controller);
+        if (yaw.HasValue)
+            stats.LastCameraYawDegrees = yaw.Value;
+
+        var dashPressed = IsNewKeyPress(_dashKey.VirtualKey, ref stats.PreviousDashKeyDown);
+        var jumpPressed = IsNewKeyPress(_jumpKey.VirtualKey, ref stats.PreviousJumpKeyDown);
+        if (!dashPressed && !jumpPressed)
+            return;
+
+        if (stats.LastCameraYawDegrees.HasValue)
+            stats.SetLastActionAngle(stats.LastCameraYawDegrees.Value);
+    }
+
+    private void LoadActionButtonSettings()
+    {
+        try
+        {
+            var settingsPath = GetOverlaySettingsPath();
+            if (!File.Exists(settingsPath))
+                return;
+
+            var settings = JsonSerializer.Deserialize<OverlaySettings>(File.ReadAllText(settingsPath));
+            ConfigureActionKeys(settings?.DashKey, settings?.JumpKey);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            Console.WriteLine($"[Average Speed] Could not load action button settings: {ex.Message}");
+        }
+    }
+
+    private void ConfigureActionKeys(string? dashKey, string? jumpKey)
+    {
+        if (TrackedKey.TryFromName(dashKey, out var parsedDashKey))
+            _dashKey = parsedDashKey;
+
+        if (TrackedKey.TryFromName(jumpKey, out var parsedJumpKey))
+            _jumpKey = parsedJumpKey;
+    }
+
+    private static string GetOverlaySettingsPath()
+    {
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return Path.Combine(appData, OverlaySettingsFolderName, OverlaySettingsFileName);
+    }
+
+    private static bool IsNewKeyPress(int virtualKey, ref bool wasDown)
+    {
+        var state = GetAsyncKeyState(virtualKey);
+        var isDown = (state & 0x8000) != 0;
+        var wasPressedSinceLastCall = (state & 0x0001) != 0;
+        var isNewPress = (isDown && !wasDown) || (wasPressedSinceLastCall && !wasDown);
+
+        wasDown = isDown;
+        return isNewPress;
+    }
+
+    private static double? TryGetCameraYaw(CCitadelUserCmdPB cmd)
+    {
+        if (cmd.AngCameraAngles != null && cmd.AngCameraAngles.HasY)
+            return NormalizeToRightAngle(cmd.AngCameraAngles.Y);
+
+        if (cmd.Base?.Viewangles != null && cmd.Base.Viewangles.HasY)
+            return NormalizeToRightAngle(cmd.Base.Viewangles.Y);
+
+        return null;
+    }
+
+    private static double? TryGetPawnYaw(CCitadelPlayerController controller)
+    {
+        var pawn = controller.GetHeroPawn();
+        if (pawn == null)
+            return null;
+
+        return NormalizeToRightAngle(pawn.CameraAngles.Y);
+    }
+
+    private static double NormalizeToRightAngle(double angle)
+    {
+        var normalized = angle % 360.0;
+        if (normalized < 0)
+            normalized += 360.0;
+
+        var folded = normalized % 180.0;
+        return folded > 90.0 ? 180.0 - folded : folded;
     }
 
     private void SendStatsToPlayer(CCitadelPlayerController controller, SpeedStats stats, bool useHud)
@@ -345,11 +485,18 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
         public double Max5Horizontal { get; private set; }
         public double Max5Vertical { get; private set; }
         public double Max5Total { get; private set; }
+        public double? LastActionAngleDegrees { get; private set; }
+        public double? LastCameraYawDegrees { get; set; }
+        public bool PreviousDashKeyDown;
+        public bool PreviousJumpKeyDown;
 
         public void Reset()
         {
             _lastTimestamp = 0;
             _lastHudTimestamp = 0;
+            PreviousDashKeyDown = false;
+            PreviousJumpKeyDown = false;
+            LastCameraYawDegrees = null;
             _weightedHorizontalSum = 0;
             _weightedVerticalSum = 0;
             _weightedTotalSum = 0;
@@ -365,11 +512,30 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
             Max5Horizontal = 0;
             Max5Vertical = 0;
             Max5Total = 0;
+            LastActionAngleDegrees = null;
+        }
+
+        public void ResetMax()
+        {
+            _recentSamples.Clear();
+            MaxHorizontal = 0;
+            MaxVertical = 0;
+            MaxTotal = 0;
+            Max5Horizontal = 0;
+            Max5Vertical = 0;
+            Max5Total = 0;
+        }
+
+        public void SetLastActionAngle(double angle)
+        {
+            LastActionAngleDegrees = angle;
         }
 
         public void MarkPaused()
         {
             _lastTimestamp = 0;
+            PreviousDashKeyDown = false;
+            PreviousJumpKeyDown = false;
             _recentSamples.Clear();
             CurrentHorizontal = 0;
             CurrentVertical = 0;
@@ -469,7 +635,8 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
                 averageTotal,
                 MaxTotal,
                 Max5Total,
-                _seconds);
+                _seconds,
+                LastActionAngleDegrees);
         }
 
         private void AddRecentSample(long now, double horizontal, double vertical, double total)
@@ -511,11 +678,63 @@ public sealed class AverageSpeedPlugin : DeadworksPluginBase
         double AverageTotal,
         double MaxTotal,
         double Max5Total,
-        double Seconds);
+        double Seconds,
+        double? LastActionAngleDegrees);
+
+    private sealed class OverlaySettings
+    {
+        public string DashKey { get; set; } = "Shift";
+        public string JumpKey { get; set; } = "Space";
+    }
 
     private sealed class OverlayCommand
     {
         public string Command { get; set; } = "";
         public int Slot { get; set; }
+        public string? DashKey { get; set; }
+        public string? JumpKey { get; set; }
     }
+
+    private readonly record struct TrackedKey(string Name, int VirtualKey)
+    {
+        private static readonly Dictionary<string, int> KeyMap = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Shift"] = 0x10,
+            ["LeftShift"] = 0xA0,
+            ["RightShift"] = 0xA1,
+            ["Space"] = 0x20,
+            ["Ctrl"] = 0x11,
+            ["LeftCtrl"] = 0xA2,
+            ["RightCtrl"] = 0xA3,
+            ["Alt"] = 0x12,
+            ["LeftAlt"] = 0xA4,
+            ["RightAlt"] = 0xA5,
+            ["Mouse4"] = 0x05,
+            ["Mouse5"] = 0x06,
+            ["C"] = 0x43,
+            ["F"] = 0x46,
+            ["Q"] = 0x51,
+            ["E"] = 0x45
+        };
+
+        public static TrackedKey FromName(string name)
+        {
+            return TryFromName(name, out var key) ? key : new TrackedKey("Shift", 0x10);
+        }
+
+        public static bool TryFromName(string? name, out TrackedKey key)
+        {
+            if (!string.IsNullOrWhiteSpace(name) && KeyMap.TryGetValue(name, out var virtualKey))
+            {
+                key = new TrackedKey(name, virtualKey);
+                return true;
+            }
+
+            key = default;
+            return false;
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
 }

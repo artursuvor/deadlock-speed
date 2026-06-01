@@ -23,6 +23,14 @@ The script builds and installs the plugin, restarts Deadworks, starts the overla
 +connect localhost:27067
 ```
 
+To close the local session tools and Deadlock:
+
+```bat
+stop-speed-session.cmd
+```
+
+Use `stop-speed-session.cmd -KeepGame` if you only want to stop Deadworks and the overlay.
+
 More details are in:
 
 ```text

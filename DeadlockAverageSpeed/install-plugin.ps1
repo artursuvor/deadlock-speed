@@ -5,6 +5,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectPath = Join-Path $projectDir "DeadlockAverageSpeed.csproj"
 $managedDir = Join-Path $DeadlockDir "game\bin\win64\managed"
@@ -25,6 +30,9 @@ if (Test-Path (Join-Path $sdkDir "game\bin\win64\managed\DeadworksManaged.Api.dl
 }
 
 dotnet @buildArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet build exited with code $LASTEXITCODE."
+}
 
 $outputDir = Join-Path $projectDir "bin\$Configuration\net10.0"
 Copy-Item -Force (Join-Path $outputDir "DeadlockAverageSpeed.dll") $pluginDir

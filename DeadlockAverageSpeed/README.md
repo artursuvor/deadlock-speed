@@ -28,6 +28,18 @@ start-speed-session.cmd -NoGame
 start-speed-session.cmd -ShowServer
 ```
 
+To close Deadworks, the overlay, and Deadlock:
+
+```bat
+stop-speed-session.cmd
+```
+
+Use this if you want to leave Deadlock open and only stop the local tooling:
+
+```bat
+stop-speed-session.cmd -KeepGame
+```
+
 ## Requirements
 
 - Deadlock installed through Steam.
@@ -93,6 +105,7 @@ Use these in chat or console:
 - `/speedwatch on|off|toggle`: print stats to your console every 0.5 seconds.
 - `/speedhud on|off|toggle`: show stats as a HUD announcement about once per second.
 - `/speedall`: print stats for all connected players to your console.
+- `/speedkeys <dashKey> <jumpKey>`: change which physical keys capture the last camera angle. Defaults are `Shift` and `Space`.
 
 Stats include:
 
@@ -142,4 +155,9 @@ The overlay mode selector changes which speed is shown:
 - `Z`: absolute vertical speed.
 - `3D`: total speed.
 
+`CURRENT` shows the last dash/jump camera yaw in parentheses after the speed, for example `100.0(123°)`.
+Use the gear button to change the dash/jump keys if your setup uses different keybinds.
+
 `MAX` is the all-time max since the last reset. `MAX 5S` is the highest speed seen during the last 5 seconds.
+
+The overlay's `Stop` button closes Deadworks, Deadlock, and any other speed overlay windows.

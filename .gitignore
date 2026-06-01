@@ -10,6 +10,7 @@ vendor/
 *.suo
 *.log
 *.tmp
+.speed-session.json
 
 DeadlockAverageSpeed/bin/
 DeadlockAverageSpeed/obj/
